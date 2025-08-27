@@ -88,7 +88,7 @@
   function loadImage(path){
     return new Promise((resolve,reject)=>{
       const img = new Image();
-      img.crossOrigin = 'anonymous';
+      img.crossOrigin = 'anonymous'; // safe on GitHub Pages/Netlify
       img.onload = ()=>resolve(img);
       img.onerror = ()=>reject(new Error('Image failed: '+assetUrl(path)));
       img.src = assetUrl(path);
@@ -120,15 +120,8 @@
       4:{ img:'numbers/4.png', label:'Four'  },
       5:{ img:'numbers/5.png', label:'Five'  }
     },
-    faceIcons: {
-      eyes:'face/eyes.png', nose:'face/nose.png', mouth:'face/mouth.png'
-      // (add face/ears.png later if you make one)
-    },
-    peekaboo: {
-      circle:'peekaboo/circle.png',
-      square:'peekaboo/square.png',
-      triangle:'peekaboo/triangle.png'
-    }
+    faceIcons: { eyes:'face/eyes.png', nose:'face/nose.png', mouth:'face/mouth.png' },
+    peekaboo:  { circle:'peekaboo/circle.png', square:'peekaboo/square.png', triangle:'peekaboo/triangle.png' }
   };
 
   const pre = { images:{} };
@@ -260,12 +253,12 @@
   }
 
   /* ================= Drawing ================= */
-
   function drawBg(){
     const g1 = ctx.createLinearGradient(0,0,0,H);
     g1.addColorStop(0,'#0d1321'); g1.addColorStop(1,'#0a0f1a');
     ctx.fillStyle=g1; ctx.fillRect(0,0,W,H);
 
+    // Peekaboo covers using your PNGs
     if (mode==='peekaboo'){
       const imgs = [
         pre.images['peek/circle'],
@@ -286,7 +279,7 @@
     }
   }
 
-  // NOTE: Base body draws the character, with NO FACE unless in peekaboo
+  // Draw body (no face unless in Peekaboo)
   function drawBaseBody(){
     if (mode==='peekaboo' && !runner.visible) return;
     const img = pre.images['main/ball'];
@@ -296,8 +289,7 @@
       ctx.fillStyle = '#ffd86a';
       ctx.beginPath(); ctx.ellipse(runner.x, runner.y, runner.w/2, runner.h/2, 0, 0, Math.PI*2); ctx.fill();
     }
-    // Draw simple face ONLY in Peekaboo (so it hides/reveals)
-    if (mode==='peekaboo'){
+    if (mode==='peekaboo'){ // simple face only in Peekaboo
       ctx.fillStyle = '#0b0f18';
       ctx.beginPath(); ctx.arc(runner.x-28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
       ctx.beginPath(); ctx.arc(runner.x+28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
@@ -307,38 +299,31 @@
     }
   }
 
-  // Body-parts overlay: draw your PNG facial features on the ball
+  // Body Parts: draw your facial PNGs on top
   function drawBodyPartsOverlay(){
-    // positions relative to runner center
-    const scale = runner.w / 160; // base designed around 160px
-    const imgEyes = pre.images['face/eyes'];
-    const imgNose = pre.images['face/nose'];
-    const imgMouth= pre.images['face/mouth'];
+    const scale = runner.w / 160;
+    const eyes = pre.images['face/eyes'];
+    const nose = pre.images['face/nose'];
+    const mouth= pre.images['face/mouth'];
 
-    // Eyes
-    if (imgEyes){
+    // Eyes (left & right using same image)
+    if (eyes){
       const w=50*scale, h=30*scale;
-      // left
-      ctx.drawImage(imgEyes, runner.x - 28*scale - w/2, runner.y - 15*scale - h/2, w, h);
-      // right (reuse same image; mirrored look not required for a toddler)
-      ctx.drawImage(imgEyes, runner.x + 28*scale - w/2, runner.y - 15*scale - h/2, w, h);
+      ctx.drawImage(eyes, runner.x - 28*scale - w/2, runner.y - 15*scale - h/2, w, h);
+      ctx.drawImage(eyes, runner.x + 28*scale - w/2, runner.y - 15*scale - h/2, w, h);
     } else {
-      // fallback dots
       ctx.fillStyle='#0b0f18';
       ctx.beginPath(); ctx.arc(runner.x-28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
       ctx.beginPath(); ctx.arc(runner.x+28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
     }
-    // Nose
-    if (imgNose){
+    if (nose){
       const w=28*scale, h=28*scale;
-      ctx.drawImage(imgNose, runner.x - w/2, runner.y - h/2, w, h);
+      ctx.drawImage(nose, runner.x - w/2, runner.y - h/2, w, h);
     }
-    // Mouth
-    if (imgMouth){
+    if (mouth){
       const w=70*scale, h=40*scale;
-      ctx.drawImage(imgMouth, runner.x - w/2, runner.y + 22*scale - h/2, w, h);
+      ctx.drawImage(mouth, runner.x - w/2, runner.y + 22*scale - h/2, w, h);
     } else {
-      // simple smile fallback
       ctx.lineWidth = 10; ctx.lineCap='round'; ctx.strokeStyle='#0b0f18';
       ctx.beginPath(); ctx.moveTo(runner.x-36, runner.y+25);
       ctx.quadraticCurveTo(runner.x, runner.y+50, runner.x+36, runner.y+25); ctx.stroke();
@@ -384,7 +369,6 @@
     }
 
     if (mode==='body'){
-      // show facial-feature PNGs so the kid can tap specific parts
       drawBodyPartsOverlay();
     }
   }
@@ -429,12 +413,10 @@
     stage.appendChild(el); setTimeout(()=>el.remove(),650);
   }
   function flashToast(msg){
-    const toast = document.getElementById('toast');
     toast.textContent = msg; toast.classList.add('show');
     clearTimeout(flashToast._t); flashToast._t = setTimeout(()=>toast.classList.remove('show'), 600);
   }
   function showLabel(text){
-    const labelEl = document.getElementById('label');
     labelEl.textContent = text; labelEl.classList.add('show');
     clearTimeout(showLabel._t); showLabel._t = setTimeout(()=>labelEl.classList.remove('show'), 900);
   }
@@ -459,7 +441,7 @@
   function onPointerDown(ev){
     if (ev.isPrimary === false) return;
     const now = performance.now();
-    if (now - lastTapTime < 220) return;
+    if (now - lastTapTime < 220) return; // debounce
     lastTapTime = now;
 
     const rect = canvas.getBoundingClientRect();
@@ -469,6 +451,7 @@
     const dx = x - runner.x, dy = y - runner.y;
     if (dx*dx + dy*dy > runner.r*runner.r) return;
 
+    // snapshot current state BEFORE mutating
     let speakText=null, labelText=null, sticker=null;
 
     if (mode==='colors'){
@@ -496,3 +479,65 @@
       const part = hitBodyPart(x,y);
       if (!part) return;
       speakText = part.name + '!'; labelText = part.name;
+      sticker = ['body_'+part.id, part.name, part.iconPath || part.icon || '⭐'];
+    }
+
+    if (speakText) speak(speakText); else boop();
+    if (labelText) showLabel(labelText);
+    if (sticker) addSticker(...sticker);
+
+    score++; scoreEl.textContent = String(score);
+    showRipple(runner.x, runner.y);
+    flashToast('Great job!');
+
+    // bounce + new target
+    runner.vx = (Math.random()<.5?-1:1) * (160 + Math.random()*160) * speedScale;
+    runner.vy = (Math.random()<.5?-1:1) * (140 + Math.random()*140) * speedScale;
+
+    pickNext();
+  }
+  canvas.addEventListener('pointerdown', onPointerDown, {passive:true});
+  addEventListener('pointerdown', ensureAudio, {once:true});
+
+  /* ================= Controls ================= */
+  const resetBtn = document.getElementById('resetBtn');
+  const speedBtn = document.getElementById('speedBtn');
+  const clearShelfBtn = document.getElementById('clearShelfBtn');
+  const modeBtns = Array.from(document.querySelectorAll('.mode'));
+
+  resetBtn.addEventListener('click', () => { score=0; scoreEl.textContent='0'; flashToast('Reset!'); });
+  speedBtn.addEventListener('click', () => {
+    speedScale = speedScale===0.7 ? 1.0 : 0.7;
+    speedBtn.textContent = 'Speed: ' + (speedScale===0.7 ? 'Gentle' : 'Normal');
+  });
+  clearShelfBtn.addEventListener('click', () => { clearShelf(); flashToast('Cleared'); });
+
+  modeBtns.forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      modeBtns.forEach(b=>b.setAttribute('aria-pressed','false'));
+      btn.setAttribute('aria-pressed','true');
+      mode = btn.dataset.mode;
+      pickNext();
+      if (mode==='colors'){ speak('Colors'); peekTip.style.display='none'; }
+      if (mode==='animals'){ speak('Animals'); peekTip.style.display='none'; }
+      if (mode==='count'){ speak('Let\'s count!'); runner.countIndex=0; peekTip.style.display='none'; }
+      if (mode==='peekaboo'){ speak('Peekaboo!'); peekTip.style.display='block'; }
+      if (mode==='body'){ speak('Body parts'); peekTip.style.display='none'; }
+    });
+  });
+
+  /* ================= Start ================= */
+  async function init(){
+    resize();
+    runner.x = W*0.3 + Math.random()*W*0.4;
+    runner.y = H*0.3 + Math.random()*H*0.4;
+    try { await preload(); } catch {}
+    pickNext();
+    requestAnimationFrame(step);
+  }
+  // kick off
+  setTimeout(init, 0);
+})();
+</script>
+</body>
+</html>
