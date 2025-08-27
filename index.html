@@ -97,7 +97,6 @@
 
   /* ================= Your assets ================= */
   const ASSETS = {
-    main: { ball: 'main/ball.png' },
     animals: {
       cow:   { img:'animals/cow.png',   icon:'🐮', phrase:'Cow — moo!'   },
       dog:   { img:'animals/dog.png',   icon:'🐶', phrase:'Dog — woof!'  },
@@ -126,7 +125,6 @@
 
   const pre = { images:{} };
   async function preload(){
-    try { pre.images['main/ball'] = await loadImage(ASSETS.main.ball); } catch {}
     for (const [id, a] of Object.entries(ASSETS.animals)){
       try { pre.images['animals/'+id] = await loadImage(a.img); } catch {}
     }
@@ -144,32 +142,36 @@
     }
   }
 
-  /* ================= Speech + fallback “boop” ================= */
+  /* ================= Audio: speech + gentle chime ================= */
   let audioCtx = null;
   const ensureAudio = () => {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') audioCtx.resume();
   };
-  function boop(){
+  function chime(){
     ensureAudio();
-    const now = audioCtx.currentTime, o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.type='sine'; o.frequency.setValueAtTime(650, now);
-    o.frequency.exponentialRampToValueAtTime(330, now+0.18);
-    g.gain.setValueAtTime(0.001, now);
-    g.gain.exponentialRampToValueAtTime(0.25, now+0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, now+0.25);
-    o.connect(g).connect(audioCtx.destination); o.start(now); o.stop(now+0.28);
+    const now = audioCtx.currentTime;
+    const notes = [523.25,659.25,783.99]; // C5 E5 G5
+    notes.forEach((f,i)=>{
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type='sine'; o.frequency.value=f;
+      g.gain.value=0.0001;
+      g.gain.exponentialRampToValueAtTime(0.2, now+0.02+i*0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, now+0.25+i*0.05);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(now+i*0.05); o.stop(now+0.35+i*0.05);
+    });
   }
   function speak(text){
     try{
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 0.9; u.pitch = 1.0;
       speechSynthesis.cancel(); speechSynthesis.speak(u);
-    } catch { boop(); }
+    } catch { chime(); }
   }
 
   /* ================= Stickers ================= */
-  const SHELF_KEY = 'toddler.tap.stickers.v3';
+  const SHELF_KEY = 'toddler.tap.stickers.v4';
   const shelfEl = document.getElementById('shelfBar');
   let stickers = new Set(JSON.parse(localStorage.getItem(SHELF_KEY) || '[]'));
   const saveShelf = () => localStorage.setItem(SHELF_KEY, JSON.stringify([...stickers]));
@@ -220,7 +222,7 @@
     W = Math.max(320, rect.width|0);
     H = Math.max(320, rect.height|0);
     canvas.width = (W*DPR)|0; canvas.height=(H*DPR)|0;
-    ctx.setTransform(DPR,0,0,DPR,0,0); clampRunner();
+    ctx.setTransform(DPR,0,0,DPR,0,0); clampMover();
   }
   addEventListener('resize', resize, {passive:true});
   new ResizeObserver(resize).observe(stage);
@@ -229,16 +231,44 @@
   const ANIMAL_KEYS = Object.keys(ASSETS.animals);
   const COUNT_SEQ = [1,2,3,4,5];
 
-  const runner = {
+  // Single mover used in all modes
+  const mover = {
     x:200, y:200, r:80, w:160, h:160,
     vx:120, vy:100,
-    colorKey: COLOR_KEYS[0], animalKey: ANIMAL_KEYS[0], countIndex: 0,
-    visible:true
+    colorKey: COLOR_KEYS[0], animalKey: ANIMAL_KEYS[0], countIndex: 0
+  };
+  function clampMover(){
+    mover.x = Math.max(mover.r, Math.min(W-mover.r, mover.x));
+    mover.y = Math.max(mover.r, Math.min(H-mover.r, mover.y));
+  }
+
+  // Peekaboo sequence
+  const covers = []; // filled on resize
+  const peek = {
+    activeCover: 0,
+    progress: 0,   // 0 = hidden behind; 1 = fully popped
+    dir: 1,        // +1 pop up, -1 go down
+    nextFlip: 0
   };
 
-  function clampRunner(){
-    runner.x = Math.max(runner.r, Math.min(W-runner.r, runner.x));
-    runner.y = Math.max(runner.r, Math.min(H-runner.r, runner.y));
+  function buildCovers(){
+    covers.length = 0;
+    const imgs = [
+      pre.images['peek/circle'],
+      pre.images['peek/square'],
+      pre.images['peek/triangle']
+    ].filter(Boolean);
+
+    const n = 6, step=W/(n+1), s=120;
+    for(let i=0;i<n;i++){
+      covers.push({
+        x: step*(i+1),
+        y: H*0.55 + Math.sin((i+1)*1.3)*20,
+        s,
+        img: imgs[i % Math.max(1, imgs.length)]
+      });
+    }
+    peek.activeCover = Math.floor(Math.random()*covers.length);
   }
 
   let mode = 'colors'; // colors | animals | count | peekaboo | body
@@ -246,10 +276,15 @@
   let speedScale = 0.7;
 
   function pickNext(){
-    if (mode==='colors') runner.colorKey = COLOR_KEYS[(Math.random()*COLOR_KEYS.length)|0];
-    if (mode==='animals') runner.animalKey = ANIMAL_KEYS[(Math.random()*ANIMAL_KEYS.length)|0];
-    if (mode==='count') runner.countIndex = (runner.countIndex+1) % COUNT_SEQ.length;
-    if (mode==='peekaboo') runner.visible = Math.random() < 0.4;
+    if (mode==='colors') mover.colorKey = COLOR_KEYS[(Math.random()*COLOR_KEYS.length)|0];
+    if (mode==='animals') mover.animalKey = ANIMAL_KEYS[(Math.random()*ANIMAL_KEYS.length)|0];
+    if (mode==='count') mover.countIndex = (mover.countIndex+1) % COUNT_SEQ.length;
+    if (mode==='peekaboo'){
+      // choose a new cover to pop from
+      peek.activeCover = Math.floor(Math.random()*covers.length);
+      peek.dir = 1; peek.progress = 0;
+      peek.nextFlip = performance.now() + 900 + Math.random()*1200;
+    }
   }
 
   /* ================= Drawing ================= */
@@ -257,153 +292,166 @@
     const g1 = ctx.createLinearGradient(0,0,0,H);
     g1.addColorStop(0,'#0d1321'); g1.addColorStop(1,'#0a0f1a');
     ctx.fillStyle=g1; ctx.fillRect(0,0,W,H);
-
-    // Peekaboo covers using your PNGs
-    if (mode==='peekaboo'){
-      const imgs = [
-        pre.images['peek/circle'],
-        pre.images['peek/square'],
-        pre.images['peek/triangle']
-      ].filter(Boolean);
-      if (imgs.length){
-        const n=6, step=W/(n+1);
-        for(let i=0;i<n;i++){
-          const img = imgs[i % imgs.length];
-          const x = step*(i+1), y = H*0.55 + Math.sin((i+1)*1.3)*20;
-          const s = 110;
-          ctx.save(); ctx.globalAlpha = 0.85;
-          ctx.drawImage(img, x - s/2, y - s/2, s, s);
-          ctx.restore();
-        }
-      }
-    }
   }
 
-  // Draw body (no face unless in Peekaboo)
-  function drawBaseBody(){
-    if (mode==='peekaboo' && !runner.visible) return;
-    const img = pre.images['main/ball'];
+  // SIMPLE FACE (used for peekaboo pop + body mode base)
+  function drawSimpleFace(x,y,scale=1){
+    ctx.fillStyle = '#ffd86a';
+    ctx.beginPath(); ctx.ellipse(x, y, 80*scale, 80*scale, 0, 0, Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = '#0b0f18';
+    ctx.beginPath(); ctx.arc(x-28*scale, y-15*scale, 12*scale, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+28*scale, y-15*scale, 12*scale, 0, Math.PI*2); ctx.fill();
+
+    ctx.lineWidth = 10*scale; ctx.lineCap='round'; ctx.strokeStyle='#0b0f18';
+    ctx.beginPath(); ctx.moveTo(x-36*scale, y+25*scale);
+    ctx.quadraticCurveTo(x, y+50*scale, x+36*scale, y+25*scale); ctx.stroke();
+  }
+
+  function drawColors(){
+    const key = mover.colorKey, ent = ASSETS.colors[key];
+    const img = pre.images['colors/'+key];
     if (img){
-      ctx.drawImage(img, runner.x - runner.w/2, runner.y - runner.h/2, runner.w, runner.h);
+      ctx.drawImage(img, mover.x - 70, mover.y - 70, 140, 140);
     } else {
-      ctx.fillStyle = '#ffd86a';
-      ctx.beginPath(); ctx.ellipse(runner.x, runner.y, runner.w/2, runner.h/2, 0, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = ent.fill;
+      ctx.beginPath(); ctx.ellipse(mover.x, mover.y, 60, 60, 0, 0, Math.PI*2); ctx.fill();
     }
-    if (mode==='peekaboo'){ // simple face only in Peekaboo
-      ctx.fillStyle = '#0b0f18';
-      ctx.beginPath(); ctx.arc(runner.x-28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(runner.x+28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
-      ctx.lineWidth = 10; ctx.lineCap='round'; ctx.strokeStyle='#0b0f18';
-      ctx.beginPath(); ctx.moveTo(runner.x-36, runner.y+25);
-      ctx.quadraticCurveTo(runner.x, runner.y+50, runner.x+36, runner.y+25); ctx.stroke();
+  }
+  function drawAnimals(){
+    const key = mover.animalKey, img = pre.images['animals/'+key];
+    if (img) ctx.drawImage(img, mover.x - 70, mover.y - 70, 140, 140);
+    else {
+      const icon = ASSETS.animals[key]?.icon || '⭐';
+      ctx.font = '56px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(icon, mover.x, mover.y);
+    }
+  }
+  function drawCount(){
+    const n = COUNT_SEQ[mover.countIndex];
+    const img = pre.images['numbers/'+n];
+    if (img) ctx.drawImage(img, mover.x - 60, mover.y - 60, 120, 120);
+    else {
+      ctx.font = 'bold 64px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(n), mover.x, mover.y);
     }
   }
 
-  // Body Parts: draw your facial PNGs on top
-  function drawBodyPartsOverlay(){
-    const scale = runner.w / 160;
+  // Body: always draw one face, then overlay feature PNGs
+  function drawBody(){
+    drawSimpleFace(mover.x, mover.y, 1);
+    const scale = 1;
     const eyes = pre.images['face/eyes'];
     const nose = pre.images['face/nose'];
     const mouth= pre.images['face/mouth'];
-
-    // Eyes (left & right using same image)
     if (eyes){
-      const w=50*scale, h=30*scale;
-      ctx.drawImage(eyes, runner.x - 28*scale - w/2, runner.y - 15*scale - h/2, w, h);
-      ctx.drawImage(eyes, runner.x + 28*scale - w/2, runner.y - 15*scale - h/2, w, h);
-    } else {
-      ctx.fillStyle='#0b0f18';
-      ctx.beginPath(); ctx.arc(runner.x-28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(runner.x+28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
+      const w=50, h=30;
+      ctx.drawImage(eyes, mover.x - 28 - w/2, mover.y - 15 - h/2, w, h);
+      ctx.drawImage(eyes, mover.x + 28 - w/2, mover.y - 15 - h/2, w, h);
     }
-    if (nose){
-      const w=28*scale, h=28*scale;
-      ctx.drawImage(nose, runner.x - w/2, runner.y - h/2, w, h);
-    }
-    if (mouth){
-      const w=70*scale, h=40*scale;
-      ctx.drawImage(mouth, runner.x - w/2, runner.y + 22*scale - h/2, w, h);
+    if (nose)  ctx.drawImage(nose,  mover.x - 14, mover.y - 14, 28, 28);
+    if (mouth) ctx.drawImage(mouth, mover.x - 35, mover.y + 22 - 20, 70, 40);
+  }
+
+  // Peekaboo: draw shapes, then face *popping* from behind active cover
+  function drawPeekaboo(t){
+    // background decorations (covers)
+    covers.forEach((c,i)=>{
+      if (!c.img){
+        // fallback: smooth rounded rect / circle
+        ctx.save(); ctx.globalAlpha = 0.9;
+        ctx.fillStyle = i%2? '#2a375a' : '#1b2644';
+        if (i%2){ ctx.beginPath(); ctx.roundRect(c.x-c.s/2, c.y-c.s/2, c.s, c.s*0.78, 18); ctx.fill(); }
+        else    { ctx.beginPath(); ctx.arc(c.x, c.y, c.s*0.45, 0, Math.PI*2); ctx.fill(); }
+        ctx.restore();
+      } else {
+        ctx.save(); ctx.globalAlpha = 0.95;
+        ctx.drawImage(c.img, c.x - c.s/2, c.y - c.s/2, c.s, c.s);
+        ctx.restore();
+      }
+    });
+
+    // animate progress
+    const speed = 0.035; // easing speed
+    peek.progress += peek.dir * speed;
+    if (peek.progress > 1){ peek.progress = 1; }
+    if (peek.progress < 0){ peek.progress = 0; }
+
+    const c = covers[peek.activeCover];
+    if (!c) return;
+
+    // pop position (easeOutBack feel)
+    const ease = (p)=> { const s=1.70158; p = Math.min(1, Math.max(0,p)); return 1 + ( --p * p * ((s+1)*p + s) ); };
+    const p = ease(peek.progress);
+
+    // y offset: start hidden, pop above the top edge of the cover
+    const hiddenY = c.y + c.s*0.25;
+    const shownY  = c.y - c.s*0.15;
+    const faceY   = hiddenY + (shownY - hiddenY) * p;
+    const faceX   = c.x;
+
+    // draw face first...
+    drawSimpleFace(faceX, faceY, 0.9);
+
+    // ...then draw the cover AGAIN to occlude lower part (so it looks like behind)
+    if (c.img){
+      ctx.drawImage(c.img, c.x - c.s/2, c.y - c.s/2, c.s, c.s);
     } else {
-      ctx.lineWidth = 10; ctx.lineCap='round'; ctx.strokeStyle='#0b0f18';
-      ctx.beginPath(); ctx.moveTo(runner.x-36, runner.y+25);
-      ctx.quadraticCurveTo(runner.x, runner.y+50, runner.x+36, runner.y+25); ctx.stroke();
+      ctx.save(); ctx.fillStyle='#1b2644'; ctx.globalAlpha=0.95;
+      ctx.beginPath(); ctx.roundRect(c.x-c.s/2, c.y-c.s/2, c.s, c.s*0.78, 18); ctx.fill();
+      ctx.restore();
+    }
+
+    // auto flip timing
+    if (t > peek.nextFlip){
+      if (peek.dir > 0){ // reached up → go down soon
+        peek.dir = -1;
+        peek.nextFlip = t + 500 + Math.random()*600;
+      } else { // reached down → choose next and pop again
+        peek.activeCover = Math.floor(Math.random()*covers.length);
+        peek.dir = 1; peek.progress = 0;
+        peek.nextFlip = t + 800 + Math.random()*1000;
+      }
     }
   }
 
-  function drawOverlay(){
-    if (mode==='peekaboo' && !runner.visible) return;
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-
-    if (mode==='colors'){
-      const key = runner.colorKey, ent = ASSETS.colors[key];
-      const img = pre.images['colors/'+key];
-      if (img){
-        ctx.drawImage(img, runner.x - 70, runner.y - 70, 140, 140);
-      } else {
-        ctx.fillStyle = ent.fill;
-        ctx.beginPath(); ctx.ellipse(runner.x, runner.y, 60, 60, 0, 0, Math.PI*2); ctx.fill();
-      }
-    }
-
-    if (mode==='animals'){
-      const key = runner.animalKey, img = pre.images['animals/'+key];
-      if (img){
-        ctx.drawImage(img, runner.x - 70, runner.y - 70, 140, 140);
-      } else {
-        const icon = ASSETS.animals[key]?.icon || '⭐';
-        ctx.font = '56px system-ui, -apple-system, Segoe UI, Roboto, Arial';
-        ctx.fillText(icon, runner.x, runner.y);
-      }
-    }
-
-    if (mode==='count'){
-      const n = COUNT_SEQ[runner.countIndex];
-      const img = pre.images['numbers/'+n];
-      if (img){
-        ctx.drawImage(img, runner.x - 60, runner.y - 60, 120, 120);
-      } else {
-        ctx.font = 'bold 64px system-ui, -apple-system, Segoe UI, Roboto, Arial';
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(String(n), runner.x, runner.y);
-      }
-    }
-
-    if (mode==='body'){
-      drawBodyPartsOverlay();
-    }
+  function draw(t){
+    drawBg();
+    if (mode==='colors')   drawColors();
+    if (mode==='animals')  drawAnimals();
+    if (mode==='count')    drawCount();
+    if (mode==='body')     drawBody();
+    if (mode==='peekaboo') drawPeekaboo(t||performance.now());
   }
-
-  function draw(){ drawBg(); drawBaseBody(); drawOverlay(); }
 
   /* ================= Loop & movement ================= */
-  let lastT=0, nudgeAt=0, peekFlipAt=0;
+  let lastT=0, nudgeAt=0;
   function step(t){
     requestAnimationFrame(step);
     if (!lastT){ lastT=t; return; }
     const dt = Math.min(0.032, (t-lastT)/1000);
     lastT = t;
 
-    if (mode==='peekaboo' && t > peekFlipAt){
-      peekFlipAt = t + 900 + Math.random()*1400;
-      runner.visible = !runner.visible;
+    if (mode!=='peekaboo'){ // move only the current sprite; peekaboo is stationary pop
+      mover.x += mover.vx*dt; mover.y += mover.vy*dt;
+      if (mover.x < mover.r){ mover.x=mover.r; mover.vx=Math.abs(mover.vx); }
+      if (mover.x > W-mover.r){ mover.x=W-mover.r; mover.vx=-Math.abs(mover.vx); }
+      if (mover.y < mover.r){ mover.y=mover.r; mover.vy=Math.abs(mover.vy); }
+      if (mover.y > H-mover.r){ mover.y=H-mover.r; mover.vy=-Math.abs(mover.vy); }
+
+      if (t>nudgeAt){
+        nudgeAt = t + 1200 + Math.random()*1800;
+        mover.vx += (Math.random()*100 - 50);
+        mover.vy += (Math.random()*100 - 50);
+        const max = speedScale * 220;
+        mover.vx = Math.max(-max, Math.min(max, mover.vx));
+        mover.vy = Math.max(-max, Math.min(max, mover.vy));
+      }
     }
 
-    runner.x += runner.vx*dt; runner.y += runner.vy*dt;
-    if (runner.x < runner.r){ runner.x=runner.r; runner.vx=Math.abs(runner.vx); }
-    if (runner.x > W-runner.r){ runner.x=W-runner.r; runner.vx=-Math.abs(runner.vx); }
-    if (runner.y < runner.r){ runner.y=runner.r; runner.vy=Math.abs(runner.vy); }
-    if (runner.y > H-runner.r){ runner.y=H-runner.r; runner.vy=-Math.abs(runner.vy); }
-
-    if (t>nudgeAt){
-      nudgeAt = t + 1200 + Math.random()*1800;
-      runner.vx += (Math.random()*100 - 50);
-      runner.vy += (Math.random()*100 - 50);
-      const max = speedScale * 220;
-      runner.vx = Math.max(-max, Math.min(max, runner.vx));
-      runner.vy = Math.max(-max, Math.min(max, runner.vy));
-    }
-
-    draw();
+    draw(t);
   }
 
   /* ================= Feedback & input ================= */
@@ -422,18 +470,15 @@
   }
 
   function hitBodyPart(x,y){
-    const rx = x - runner.x, ry = y - runner.y;
+    // Hit test around typical feature locations on the face in Body mode
+    const rx = x - mover.x, ry = y - mover.y;
     const eyeL = (rx+28)**2 + (ry+15)**2 <= 20**2;
     const eyeR = (rx-28)**2 + (ry+15)**2 <= 20**2;
     const mouth= ry>10 && ry<46 && Math.abs(rx)<50;
     const nose = rx*rx + ry*ry <= 12**2;
-    const earL = (rx+82)**2 + (ry+6)**2 <= 24**2;
-    const earR = (rx-82)**2 + (ry+6)**2 <= 24**2;
-
     if (eyeL || eyeR) return {id:'eyes', name:'Eyes', iconPath:assetUrl(ASSETS.faceIcons.eyes)};
     if (nose)         return {id:'nose', name:'Nose', iconPath:assetUrl(ASSETS.faceIcons.nose)};
     if (mouth)        return {id:'mouth',name:'Mouth',iconPath:assetUrl(ASSETS.faceIcons.mouth)};
-    if (earL || earR) return {id:'ears', name:'Ears', icon:'👂'}; // add face/ears.png later if you want
     return null;
   }
 
@@ -441,59 +486,78 @@
   function onPointerDown(ev){
     if (ev.isPrimary === false) return;
     const now = performance.now();
-    if (now - lastTapTime < 220) return; // debounce
+    if (now - lastTapTime < 220) return;
     lastTapTime = now;
 
     const rect = canvas.getBoundingClientRect();
     const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
-    if (mode==='peekaboo' && !runner.visible) return;
 
-    const dx = x - runner.x, dy = y - runner.y;
-    if (dx*dx + dy*dy > runner.r*runner.r) return;
+    if (mode==='peekaboo'){
+      // consider a tap near the active cover a “catch”
+      const c = covers[peek.activeCover]; if (!c) return;
+      const dx = x - c.x, dy = y - c.y;
+      const inside = (dx*dx + dy*dy) <= (c.s*0.5)**2; // circle-ish target
+      if (!inside) return;
 
-    // snapshot current state BEFORE mutating
+      speak('Peekaboo!'); showLabel('Peekaboo!');
+      addSticker('peekaboo','Peekaboo','🙈');
+      score++; scoreEl.textContent = String(score);
+      flashToast('Great job!'); showRipple(c.x, c.y);
+
+      // force hide then schedule next pop
+      peek.dir = -1; peek.nextFlip = now + 500;
+      return;
+    }
+
+    // Other modes: only count tap if hit the moving sprite (no ball behind)
+    let hit=false;
+    if (mode==='colors' || mode==='animals'){
+      hit = ((x-mover.x)**2 + (y-mover.y)**2) <= (70**2);
+    } else if (mode==='count'){
+      hit = ((x-mover.x)**2 + (y-mover.y)**2) <= (60**2);
+    } else if (mode==='body'){
+      // face radius
+      hit = ((x-mover.x)**2 + (y-mover.y)**2) <= (80**2);
+    }
+    if (!hit) return;
+
     let speakText=null, labelText=null, sticker=null;
-
     if (mode==='colors'){
-      const key = runner.colorKey, ent = ASSETS.colors[key];
+      const key = mover.colorKey, ent = ASSETS.colors[key];
       speakText = ent.name + '!'; labelText = ent.name;
       sticker = ['color_'+key, ent.name, ent.icon];
     }
     else if (mode==='animals'){
-      const key = runner.animalKey, ent = ASSETS.animals[key];
+      const key = mover.animalKey, ent = ASSETS.animals[key];
       speak(ent?.phrase || 'Great job!'); labelText = ent?.name || key;
       const iconPath = pre.images['animals/'+key] ? assetUrl(ent.img) : (ent?.icon || '🐾');
       sticker = ['animal_'+key, ent?.name || key, iconPath];
     }
     else if (mode==='count'){
-      const n = COUNT_SEQ[runner.countIndex];
+      const n = COUNT_SEQ[mover.countIndex];
       const word = ASSETS.numbers[n]?.label || String(n);
       speak(word); labelText = word;
       const iconPath = pre.images['numbers/'+n] ? assetUrl(ASSETS.numbers[n].img) : '🔢';
       sticker = ['count_'+n, String(n), iconPath];
     }
-    else if (mode==='peekaboo'){
-      speakText = 'Peekaboo!'; labelText = 'Peekaboo!'; sticker = ['peekaboo','Peekaboo','🙈'];
-    }
     else if (mode==='body'){
       const part = hitBodyPart(x,y);
       if (!part) return;
       speakText = part.name + '!'; labelText = part.name;
-      sticker = ['body_'+part.id, part.name, part.iconPath || part.icon || '⭐'];
+      sticker = ['body_'+part.id, part.name, part.iconPath || '⭐'];
     }
 
-    if (speakText) speak(speakText); else boop();
+    if (speakText) speak(speakText); else chime();
     if (labelText) showLabel(labelText);
     if (sticker) addSticker(...sticker);
 
     score++; scoreEl.textContent = String(score);
-    showRipple(runner.x, runner.y);
+    showRipple(mover.x, mover.y);
     flashToast('Great job!');
 
     // bounce + new target
-    runner.vx = (Math.random()<.5?-1:1) * (160 + Math.random()*160) * speedScale;
-    runner.vy = (Math.random()<.5?-1:1) * (140 + Math.random()*140) * speedScale;
-
+    mover.vx = (Math.random()<.5?-1:1) * (160 + Math.random()*160) * speedScale;
+    mover.vy = (Math.random()<.5?-1:1) * (140 + Math.random()*140) * speedScale;
     pickNext();
   }
   canvas.addEventListener('pointerdown', onPointerDown, {passive:true});
@@ -517,26 +581,46 @@
       modeBtns.forEach(b=>b.setAttribute('aria-pressed','false'));
       btn.setAttribute('aria-pressed','true');
       mode = btn.dataset.mode;
+      if (mode==='peekaboo'){ peekTip.style.display='block'; }
+      else { peekTip.style.display='none'; }
       pickNext();
-      if (mode==='colors'){ speak('Colors'); peekTip.style.display='none'; }
-      if (mode==='animals'){ speak('Animals'); peekTip.style.display='none'; }
-      if (mode==='count'){ speak('Let\'s count!'); runner.countIndex=0; peekTip.style.display='none'; }
-      if (mode==='peekaboo'){ speak('Peekaboo!'); peekTip.style.display='block'; }
-      if (mode==='body'){ speak('Body parts'); peekTip.style.display='none'; }
+      if (mode==='colors')  speak('Colors');
+      if (mode==='animals') speak('Animals');
+      if (mode==='count')   { speak('Let\'s count!'); mover.countIndex=0; }
+      if (mode==='peekaboo') speak('Peekaboo!');
+      if (mode==='body')     speak('Body parts');
     });
   });
 
   /* ================= Start ================= */
   async function init(){
     resize();
-    runner.x = W*0.3 + Math.random()*W*0.4;
-    runner.y = H*0.3 + Math.random()*H*0.4;
-    try { await preload(); } catch {}
+    await preload();
+    buildCovers();
+    mover.x = W*0.3 + Math.random()*W*0.4;
+    mover.y = H*0.3 + Math.random()*H*0.4;
     pickNext();
     requestAnimationFrame(step);
   }
-  // kick off
   setTimeout(init, 0);
+
+  /* =============== UI helpers =============== */
+  function flashToast(msg){
+    const el = document.getElementById('toast');
+    el.textContent = msg; el.classList.add('show');
+    clearTimeout(flashToast._t); flashToast._t = setTimeout(()=>el.classList.remove('show'), 600);
+  }
+  function showLabel(text){
+    const el = document.getElementById('label');
+    el.textContent = text; el.classList.add('show');
+    clearTimeout(showLabel._t); showLabel._t = setTimeout(()=>el.classList.remove('show'), 900);
+  }
+  const stage = document.getElementById('stage');
+  function showRipple(x,y){
+    const el = document.createElement('div');
+    el.className='ripple'; el.style.left=x+'px'; el.style.top=y+'px';
+    stage.appendChild(el); setTimeout(()=>el.remove(),650);
+  }
 })();
 </script>
 </body>
