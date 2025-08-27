@@ -88,15 +88,14 @@
   function loadImage(path){
     return new Promise((resolve,reject)=>{
       const img = new Image();
-      img.crossOrigin = 'anonymous';           // fine on GitHub Pages/Netlify
+      img.crossOrigin = 'anonymous';
       img.onload = ()=>resolve(img);
       img.onerror = ()=>reject(new Error('Image failed: '+assetUrl(path)));
       img.src = assetUrl(path);
     });
   }
-  const loadAudio = path => Object.assign(new Audio(assetUrl(path)), { preload:'auto' });
 
-  /* ================= Your assets (wired to your folder names) ================ */
+  /* ================= Your assets ================= */
   const ASSETS = {
     main: { ball: 'main/ball.png' },
     animals: {
@@ -121,38 +120,32 @@
       4:{ img:'numbers/4.png', label:'Four'  },
       5:{ img:'numbers/5.png', label:'Five'  }
     },
-    faceIcons: {           // used for Body Parts stickers (optional)
+    faceIcons: {
       eyes:'face/eyes.png', nose:'face/nose.png', mouth:'face/mouth.png'
+      // (add face/ears.png later if you make one)
     },
-    peekaboo: {            // covers (used instead of drawn shapes)
+    peekaboo: {
       circle:'peekaboo/circle.png',
       square:'peekaboo/square.png',
       triangle:'peekaboo/triangle.png'
     }
   };
 
-  const pre = { images:{}, audio:{} };
+  const pre = { images:{} };
   async function preload(){
-    // base sprite
     try { pre.images['main/ball'] = await loadImage(ASSETS.main.ball); } catch {}
-    // animals
     for (const [id, a] of Object.entries(ASSETS.animals)){
       try { pre.images['animals/'+id] = await loadImage(a.img); } catch {}
-      // (no sounds folder in your zip—using speech; wire mp3s later if you add them)
     }
-    // colors
     for (const [id, c] of Object.entries(ASSETS.colors)){
       try { pre.images['colors/'+id] = await loadImage(c.img); } catch {}
     }
-    // numbers
     for (const n of [1,2,3,4,5]){
       try { pre.images['numbers/'+n] = await loadImage(ASSETS.numbers[n].img); } catch {}
     }
-    // face icons (optional)
     for (const [k,p] of Object.entries(ASSETS.faceIcons)){
       try { pre.images['face/'+k] = await loadImage(p); } catch {}
     }
-    // peekaboo covers
     for (const [k,p] of Object.entries(ASSETS.peekaboo)){
       try { pre.images['peek/'+k] = await loadImage(p); } catch {}
     }
@@ -182,8 +175,8 @@
     } catch { boop(); }
   }
 
-  /* ================= Stickers (persist to localStorage) ================= */
-  const SHELF_KEY = 'toddler.tap.stickers.v2';
+  /* ================= Stickers ================= */
+  const SHELF_KEY = 'toddler.tap.stickers.v3';
   const shelfEl = document.getElementById('shelfBar');
   let stickers = new Set(JSON.parse(localStorage.getItem(SHELF_KEY) || '[]'));
   const saveShelf = () => localStorage.setItem(SHELF_KEY, JSON.stringify([...stickers]));
@@ -201,7 +194,6 @@
       const [id,name,icon] = k.split('|');
       const card = document.createElement('div');
       card.className = 'sticker' + (newKey===k?' new':'');
-      // If icon is a URL path, show image; otherwise show emoji/text
       if (icon && (icon.endsWith('.png') || icon.endsWith('.jpg') || icon.startsWith('http'))){
         card.innerHTML = `<div class="icon"><img src="${icon}" style="width:2.2rem;height:2.2rem;object-fit:contain"/></div><div class="name">${name}</div>`;
       } else {
@@ -246,7 +238,7 @@
 
   const runner = {
     x:200, y:200, r:80, w:160, h:160,
-    vx:120, vy:100, flip:false,
+    vx:120, vy:100,
     colorKey: COLOR_KEYS[0], animalKey: ANIMAL_KEYS[0], countIndex: 0,
     visible:true
   };
@@ -268,13 +260,12 @@
   }
 
   /* ================= Drawing ================= */
+
   function drawBg(){
-    // gradient background
     const g1 = ctx.createLinearGradient(0,0,0,H);
     g1.addColorStop(0,'#0d1321'); g1.addColorStop(1,'#0a0f1a');
     ctx.fillStyle=g1; ctx.fillRect(0,0,W,H);
 
-    // peekaboo covers (use your PNGs)
     if (mode==='peekaboo'){
       const imgs = [
         pre.images['peek/circle'],
@@ -287,7 +278,7 @@
           const img = imgs[i % imgs.length];
           const x = step*(i+1), y = H*0.55 + Math.sin((i+1)*1.3)*20;
           const s = 110;
-          ctx.save(); ctx.globalAlpha = 0.85; // more opaque than drawn shapes
+          ctx.save(); ctx.globalAlpha = 0.85;
           ctx.drawImage(img, x - s/2, y - s/2, s, s);
           ctx.restore();
         }
@@ -295,19 +286,59 @@
     }
   }
 
+  // NOTE: Base body draws the character, with NO FACE unless in peekaboo
   function drawBaseBody(){
-    const img = pre.images['main/ball'];
     if (mode==='peekaboo' && !runner.visible) return;
+    const img = pre.images['main/ball'];
     if (img){
       ctx.drawImage(img, runner.x - runner.w/2, runner.y - runner.h/2, runner.w, runner.h);
     } else {
-      // fallback friendly blob
       ctx.fillStyle = '#ffd86a';
       ctx.beginPath(); ctx.ellipse(runner.x, runner.y, runner.w/2, runner.h/2, 0, 0, Math.PI*2); ctx.fill();
-      // minimal face
+    }
+    // Draw simple face ONLY in Peekaboo (so it hides/reveals)
+    if (mode==='peekaboo'){
       ctx.fillStyle = '#0b0f18';
       ctx.beginPath(); ctx.arc(runner.x-28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
       ctx.beginPath(); ctx.arc(runner.x+28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
+      ctx.lineWidth = 10; ctx.lineCap='round'; ctx.strokeStyle='#0b0f18';
+      ctx.beginPath(); ctx.moveTo(runner.x-36, runner.y+25);
+      ctx.quadraticCurveTo(runner.x, runner.y+50, runner.x+36, runner.y+25); ctx.stroke();
+    }
+  }
+
+  // Body-parts overlay: draw your PNG facial features on the ball
+  function drawBodyPartsOverlay(){
+    // positions relative to runner center
+    const scale = runner.w / 160; // base designed around 160px
+    const imgEyes = pre.images['face/eyes'];
+    const imgNose = pre.images['face/nose'];
+    const imgMouth= pre.images['face/mouth'];
+
+    // Eyes
+    if (imgEyes){
+      const w=50*scale, h=30*scale;
+      // left
+      ctx.drawImage(imgEyes, runner.x - 28*scale - w/2, runner.y - 15*scale - h/2, w, h);
+      // right (reuse same image; mirrored look not required for a toddler)
+      ctx.drawImage(imgEyes, runner.x + 28*scale - w/2, runner.y - 15*scale - h/2, w, h);
+    } else {
+      // fallback dots
+      ctx.fillStyle='#0b0f18';
+      ctx.beginPath(); ctx.arc(runner.x-28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(runner.x+28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
+    }
+    // Nose
+    if (imgNose){
+      const w=28*scale, h=28*scale;
+      ctx.drawImage(imgNose, runner.x - w/2, runner.y - h/2, w, h);
+    }
+    // Mouth
+    if (imgMouth){
+      const w=70*scale, h=40*scale;
+      ctx.drawImage(imgMouth, runner.x - w/2, runner.y + 22*scale - h/2, w, h);
+    } else {
+      // simple smile fallback
       ctx.lineWidth = 10; ctx.lineCap='round'; ctx.strokeStyle='#0b0f18';
       ctx.beginPath(); ctx.moveTo(runner.x-36, runner.y+25);
       ctx.quadraticCurveTo(runner.x, runner.y+50, runner.x+36, runner.y+25); ctx.stroke();
@@ -322,9 +353,8 @@
       const key = runner.colorKey, ent = ASSETS.colors[key];
       const img = pre.images['colors/'+key];
       if (img){
-        ctx.drawImage(img, runner.x - 140/2, runner.y - 140/2, 140, 140);
+        ctx.drawImage(img, runner.x - 70, runner.y - 70, 140, 140);
       } else {
-        // tint circle if PNG missing
         ctx.fillStyle = ent.fill;
         ctx.beginPath(); ctx.ellipse(runner.x, runner.y, 60, 60, 0, 0, Math.PI*2); ctx.fill();
       }
@@ -333,7 +363,7 @@
     if (mode==='animals'){
       const key = runner.animalKey, img = pre.images['animals/'+key];
       if (img){
-        ctx.drawImage(img, runner.x - 140/2, runner.y - 140/2, 140, 140);
+        ctx.drawImage(img, runner.x - 70, runner.y - 70, 140, 140);
       } else {
         const icon = ASSETS.animals[key]?.icon || '⭐';
         ctx.font = '56px system-ui, -apple-system, Segoe UI, Roboto, Arial';
@@ -345,12 +375,17 @@
       const n = COUNT_SEQ[runner.countIndex];
       const img = pre.images['numbers/'+n];
       if (img){
-        ctx.drawImage(img, runner.x - 120/2, runner.y - 120/2, 120, 120);
+        ctx.drawImage(img, runner.x - 60, runner.y - 60, 120, 120);
       } else {
         ctx.font = 'bold 64px system-ui, -apple-system, Segoe UI, Roboto, Arial';
         ctx.fillStyle = '#ffffff';
         ctx.fillText(String(n), runner.x, runner.y);
       }
+    }
+
+    if (mode==='body'){
+      // show facial-feature PNGs so the kid can tap specific parts
+      drawBodyPartsOverlay();
     }
   }
 
@@ -387,7 +422,7 @@
     draw();
   }
 
-  /* ================= UI feedback ================= */
+  /* ================= Feedback & input ================= */
   function showRipple(x,y){
     const el = document.createElement('div');
     el.className='ripple'; el.style.left=x+'px'; el.style.top=y+'px';
@@ -404,7 +439,6 @@
     clearTimeout(showLabel._t); showLabel._t = setTimeout(()=>labelEl.classList.remove('show'), 900);
   }
 
-  /* ================= Body-part hit test (for stickers) ================= */
   function hitBodyPart(x,y){
     const rx = x - runner.x, ry = y - runner.y;
     const eyeL = (rx+28)**2 + (ry+15)**2 <= 20**2;
@@ -417,11 +451,10 @@
     if (eyeL || eyeR) return {id:'eyes', name:'Eyes', iconPath:assetUrl(ASSETS.faceIcons.eyes)};
     if (nose)         return {id:'nose', name:'Nose', iconPath:assetUrl(ASSETS.faceIcons.nose)};
     if (mouth)        return {id:'mouth',name:'Mouth',iconPath:assetUrl(ASSETS.faceIcons.mouth)};
-    if (earL || earR) return {id:'ears', name:'Ears', icon:'👂'}; // no PNG provided for ears in zip
+    if (earL || earR) return {id:'ears', name:'Ears', icon:'👂'}; // add face/ears.png later if you want
     return null;
   }
 
-  /* ================= Input (pointer-only, debounced) ================= */
   let lastTapTime = 0;
   function onPointerDown(ev){
     if (ev.isPrimary === false) return;
@@ -436,7 +469,6 @@
     const dx = x - runner.x, dy = y - runner.y;
     if (dx*dx + dy*dy > runner.r*runner.r) return;
 
-    // Snapshot current content BEFORE mutating
     let speakText=null, labelText=null, sticker=null;
 
     if (mode==='colors'){
@@ -447,7 +479,6 @@
     else if (mode==='animals'){
       const key = runner.animalKey, ent = ASSETS.animals[key];
       speak(ent?.phrase || 'Great job!'); labelText = ent?.name || key;
-      // Use the animal PNG as the sticker icon
       const iconPath = pre.images['animals/'+key] ? assetUrl(ent.img) : (ent?.icon || '🐾');
       sticker = ['animal_'+key, ent?.name || key, iconPath];
     }
@@ -465,63 +496,3 @@
       const part = hitBodyPart(x,y);
       if (!part) return;
       speakText = part.name + '!'; labelText = part.name;
-      sticker = ['body_'+part.id, part.name, part.iconPath || part.icon || '⭐'];
-    }
-
-    if (speakText) speak(speakText);
-    if (labelText) showLabel(labelText);
-    if (sticker) addSticker(...sticker);
-
-    score++; scoreEl.textContent = String(score);
-    showRipple(runner.x, runner.y);
-    flashToast('Great job!');
-
-    runner.vx = (Math.random()<.5?-1:1) * (160 + Math.random()*160) * speedScale;
-    runner.vy = (Math.random()<.5?-1:1) * (140 + Math.random()*140) * speedScale;
-
-    pickNext();
-  }
-  canvas.addEventListener('pointerdown', onPointerDown, {passive:true});
-  addEventListener('pointerdown', ensureAudio, {once:true});
-
-  /* ================= Controls ================= */
-  const resetBtn = document.getElementById('resetBtn');
-  const speedBtn = document.getElementById('speedBtn');
-  const clearShelfBtn = document.getElementById('clearShelfBtn');
-  const modeBtns = Array.from(document.querySelectorAll('.mode'));
-
-  resetBtn.addEventListener('click', () => { score=0; scoreEl.textContent='0'; flashToast('Reset!'); });
-  speedBtn.addEventListener('click', () => {
-    speedScale = speedScale===0.7 ? 1.0 : 0.7;
-    speedBtn.textContent = 'Speed: ' + (speedScale===0.7 ? 'Gentle' : 'Normal');
-  });
-  clearShelfBtn.addEventListener('click', () => { clearShelf(); flashToast('Cleared'); });
-
-  modeBtns.forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      modeBtns.forEach(b=>b.setAttribute('aria-pressed','false'));
-      btn.setAttribute('aria-pressed','true');
-      mode = btn.dataset.mode;
-      pickNext();
-      if (mode==='colors'){ speak('Colors'); peekTip.style.display='none'; }
-      if (mode==='animals'){ speak('Animals'); peekTip.style.display='none'; }
-      if (mode==='count'){ speak('Let\'s count!'); runner.countIndex=0; peekTip.style.display='none'; }
-      if (mode==='peekaboo'){ speak('Peekaboo!'); peekTip.style.display='block'; }
-      if (mode==='body'){ speak('Body parts'); peekTip.style.display='none'; }
-    });
-  });
-
-  /* ================= Start ================= */
-  async function init(){
-    resize();
-    runner.x = W*0.3 + Math.random()*W*0.4;
-    runner.y = H*0.3 + Math.random()*H*0.4;
-    try { await preload(); } catch {}
-    pickNext();
-    requestAnimationFrame(step);
-  }
-  setTimeout(init, 0);
-})();
-</script>
-</body>
-</html>
