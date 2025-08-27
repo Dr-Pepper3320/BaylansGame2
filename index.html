@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Baylan’s Tap Game</title>
+<style>
+  :root{
+    --bg:#0b0f18; --panel:#0e1522; --ink:#e7f1ff; --muted:#9fb6d8;
+    --good:#7affb6; --accent:#76d1ff; --warn:#ffd86a; --panel2:#101827;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;touch-action:manipulation}
+  #wrap{position:fixed;inset:0;display:flex;flex-direction:column}
+  #hud{display:flex;gap:.75rem;align-items:center;justify-content:space-between;
+    padding:.8rem 1rem;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(0,0,0,.05))}
+  #left{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+  .big{font-weight:700;font-size:1.25rem;letter-spacing:.3px}
+  .chip{border:1px solid rgba(118,209,255,.35);background:#11182a;
+    color:var(--ink);padding:.45rem .8rem;border-radius:.8rem;font-size:1rem}
+  .chip:active{transform:scale(.98)}
+  .chip[aria-pressed="true"]{background:#142036}
+  #modeRow{display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end}
+  #stage{position:relative;flex:1;overflow:hidden;border-top:1px solid rgba(255,255,255,.06)}
+  canvas{width:100%;height:100%;display:block;touch-action:none}
+  .ripple{position:absolute;pointer-events:none;border-radius:50%;border:4px solid var(--good);
+    opacity:.9;transform:translate(-50%,-50%) scale(.2);animation:rip .6s ease-out forwards}
+  @keyframes rip{to{opacity:0;transform:translate(-50%,-50%) scale(1)}}
+  #toast{position:absolute;left:50%;top:12%;transform:translateX(-50%);padding:.5rem 1rem;
+    background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.15);border-radius:.75rem;
+    opacity:0;transition:opacity .25s, transform .25s;font-size:1.25rem}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(-6px)}
+  #label{position:absolute;left:50%;bottom:12%;transform:translateX(-50%);
+    font-weight:800;font-size:2rem;letter-spacing:.5px;text-shadow:0 2px 8px rgba(0,0,0,.5);
+    opacity:0;transition:opacity .2s}
+  #label.show{opacity:1}
+  #shelfWrap{background:var(--panel2);border-top:1px solid rgba(255,255,255,.07)}
+  #shelfBar{display:flex;gap:.5rem;overflow-x:auto;scroll-snap-type:x proximity;
+    padding:.6rem 1rem}
+  .sticker{min-width:84px;max-width:84px;scroll-snap-align:center;background:#0f1525;
+    border:1px solid rgba(255,255,255,.08);border-radius:.9rem;padding:.5rem .5rem .6rem;text-align:center}
+  .sticker .icon{font-size:2rem;line-height:1}
+  .sticker .name{font-size:.9rem;opacity:.9;margin-top:.25rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sticker.new{outline:2px solid var(--good)}
+  .peek-tip{position:absolute;left:50%;top:16%;transform:translateX(-50%);
+    font-size:1.1rem;opacity:.8}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <div id="left">
+      <div class="big">Caught: <span id="score">0</span></div>
+      <button id="resetBtn" class="chip">Reset</button>
+      <button id="speedBtn" class="chip">Speed: Gentle</button>
+      <button id="clearShelfBtn" class="chip">Clear Stickers</button>
+    </div>
+    <div id="modeRow">
+      <button class="chip mode" data-mode="colors"  aria-pressed="true">Colors</button>
+      <button class="chip mode" data-mode="animals" aria-pressed="false">Animals</button>
+      <button class="chip mode" data-mode="count"   aria-pressed="false">Count</button>
+      <button class="chip mode" data-mode="peekaboo" aria-pressed="false">Peekaboo</button>
+      <button class="chip mode" data-mode="body"    aria-pressed="false">Body Parts</button>
+    </div>
+  </div>
+
+  <div id="stage">
+    <div id="toast" role="status" aria-live="polite">Great job!</div>
+    <div id="label" aria-hidden="true"></div>
+    <div id="peekTip" class="peek-tip" style="display:none;">Tap when they peek!</div>
+    <canvas id="game" aria-label="Game canvas"></canvas>
+  </div>
+
+  <div id="shelfWrap">
+    <div id="shelfBar" aria-label="Sticker shelf"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ========= Asset base (local by default; override with ?cdn=URL ) ========= */
+  const params = new URLSearchParams(location.search);
+  const ASSET_BASE = (params.get('cdn') || './assets/').replace(/\/+$/,'') + '/';
+  const assetUrl = p => ASSET_BASE + p.replace(/^\/+/,'');
+
+  function loadImage(path){
+    return new Promise((resolve,reject)=>{
+      const img = new Image();
+      img.crossOrigin = 'anonymous';           // fine on GitHub Pages/Netlify
+      img.onload = ()=>resolve(img);
+      img.onerror = ()=>reject(new Error('Image failed: '+assetUrl(path)));
+      img.src = assetUrl(path);
+    });
+  }
+  const loadAudio = path => Object.assign(new Audio(assetUrl(path)), { preload:'auto' });
+
+  /* ================= Your assets (wired to your folder names) ================ */
+  const ASSETS = {
+    main: { ball: 'main/ball.png' },
+    animals: {
+      cow:   { img:'animals/cow.png',   icon:'🐮', phrase:'Cow — moo!'   },
+      dog:   { img:'animals/dog.png',   icon:'🐶', phrase:'Dog — woof!'  },
+      cat:   { img:'animals/cat.png',   icon:'🐱', phrase:'Cat — meow!'  },
+      duck:  { img:'animals/duck.png',  icon:'🦆', phrase:'Duck — quack!' },
+      sheep: { img:'animals/sheep.png', icon:'🐑', phrase:'Sheep — baa!' }
+    },
+    colors: {
+      red:    { img:'colors/red.png',    name:'Red',    fill:'#ff6a7b', icon:'🟥' },
+      blue:   { img:'colors/blue.png',   name:'Blue',   fill:'#76d1ff', icon:'🟦' },
+      yellow: { img:'colors/yellow.png', name:'Yellow', fill:'#ffd86a', icon:'🟨' },
+      green:  { img:'colors/green.png',  name:'Green',  fill:'#7affb6', icon:'🟩' },
+      purple: { img:'colors/purple.png', name:'Purple', fill:'#b691ff', icon:'🟪' },
+      orange: { img:'colors/orange.png', name:'Orange', fill:'#ffb46a', icon:'🟧' }
+    },
+    numbers: {
+      1:{ img:'numbers/1.png', label:'One'   },
+      2:{ img:'numbers/2.png', label:'Two'   },
+      3:{ img:'numbers/3.png', label:'Three' },
+      4:{ img:'numbers/4.png', label:'Four'  },
+      5:{ img:'numbers/5.png', label:'Five'  }
+    },
+    faceIcons: {           // used for Body Parts stickers (optional)
+      eyes:'face/eyes.png', nose:'face/nose.png', mouth:'face/mouth.png'
+    },
+    peekaboo: {            // covers (used instead of drawn shapes)
+      circle:'peekaboo/circle.png',
+      square:'peekaboo/square.png',
+      triangle:'peekaboo/triangle.png'
+    }
+  };
+
+  const pre = { images:{}, audio:{} };
+  async function preload(){
+    // base sprite
+    try { pre.images['main/ball'] = await loadImage(ASSETS.main.ball); } catch {}
+    // animals
+    for (const [id, a] of Object.entries(ASSETS.animals)){
+      try { pre.images['animals/'+id] = await loadImage(a.img); } catch {}
+      // (no sounds folder in your zip—using speech; wire mp3s later if you add them)
+    }
+    // colors
+    for (const [id, c] of Object.entries(ASSETS.colors)){
+      try { pre.images['colors/'+id] = await loadImage(c.img); } catch {}
+    }
+    // numbers
+    for (const n of [1,2,3,4,5]){
+      try { pre.images['numbers/'+n] = await loadImage(ASSETS.numbers[n].img); } catch {}
+    }
+    // face icons (optional)
+    for (const [k,p] of Object.entries(ASSETS.faceIcons)){
+      try { pre.images['face/'+k] = await loadImage(p); } catch {}
+    }
+    // peekaboo covers
+    for (const [k,p] of Object.entries(ASSETS.peekaboo)){
+      try { pre.images['peek/'+k] = await loadImage(p); } catch {}
+    }
+  }
+
+  /* ================= Speech + fallback “boop” ================= */
+  let audioCtx = null;
+  const ensureAudio = () => {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  };
+  function boop(){
+    ensureAudio();
+    const now = audioCtx.currentTime, o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type='sine'; o.frequency.setValueAtTime(650, now);
+    o.frequency.exponentialRampToValueAtTime(330, now+0.18);
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.exponentialRampToValueAtTime(0.25, now+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, now+0.25);
+    o.connect(g).connect(audioCtx.destination); o.start(now); o.stop(now+0.28);
+  }
+  function speak(text){
+    try{
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 0.9; u.pitch = 1.0;
+      speechSynthesis.cancel(); speechSynthesis.speak(u);
+    } catch { boop(); }
+  }
+
+  /* ================= Stickers (persist to localStorage) ================= */
+  const SHELF_KEY = 'toddler.tap.stickers.v2';
+  const shelfEl = document.getElementById('shelfBar');
+  let stickers = new Set(JSON.parse(localStorage.getItem(SHELF_KEY) || '[]'));
+  const saveShelf = () => localStorage.setItem(SHELF_KEY, JSON.stringify([...stickers]));
+  function addSticker(id, name, iconOrImg){
+    const key = id + '|' + name + '|' + (iconOrImg||'');
+    if (!stickers.has(key)){
+      stickers.add(key); saveShelf(); renderShelf(key);
+      flashToast('New sticker!');
+    }
+  }
+  function clearShelf(){ stickers = new Set(); saveShelf(); renderShelf(); }
+  function renderShelf(newKey=null){
+    shelfEl.innerHTML = '';
+    [...stickers].forEach(k=>{
+      const [id,name,icon] = k.split('|');
+      const card = document.createElement('div');
+      card.className = 'sticker' + (newKey===k?' new':'');
+      // If icon is a URL path, show image; otherwise show emoji/text
+      if (icon && (icon.endsWith('.png') || icon.endsWith('.jpg') || icon.startsWith('http'))){
+        card.innerHTML = `<div class="icon"><img src="${icon}" style="width:2.2rem;height:2.2rem;object-fit:contain"/></div><div class="name">${name}</div>`;
+      } else {
+        card.innerHTML = `<div class="icon">${icon || '⭐'}</div><div class="name">${name}</div>`;
+      }
+      shelfEl.appendChild(card);
+      if (newKey===k) setTimeout(()=>card.classList.remove('new'), 900);
+    });
+    if (stickers.size===0){
+      const empty = document.createElement('div');
+      empty.style.opacity='0.7'; empty.textContent='Collect stickers by tapping!';
+      shelfEl.appendChild(empty);
+    }
+  }
+  renderShelf();
+
+  /* ================= Canvas + state ================= */
+  const canvas = document.getElementById('game');
+  const stage  = document.getElementById('stage');
+  const ctx    = canvas.getContext('2d', { alpha:false });
+  const labelEl= document.getElementById('label');
+  const toast  = document.getElementById('toast');
+  const scoreEl= document.getElementById('score');
+  const peekTip= document.getElementById('peekTip');
+
+  let DPR=1, W=0, H=0;
+  function resize(){
+    const r = window.devicePixelRatio || 1;
+    DPR = Math.max(1, Math.min(3, r));
+    const rect = stage.getBoundingClientRect();
+    W = Math.max(320, rect.width|0);
+    H = Math.max(320, rect.height|0);
+    canvas.width = (W*DPR)|0; canvas.height=(H*DPR)|0;
+    ctx.setTransform(DPR,0,0,DPR,0,0); clampRunner();
+  }
+  addEventListener('resize', resize, {passive:true});
+  new ResizeObserver(resize).observe(stage);
+
+  const COLOR_KEYS = Object.keys(ASSETS.colors);
+  const ANIMAL_KEYS = Object.keys(ASSETS.animals);
+  const COUNT_SEQ = [1,2,3,4,5];
+
+  const runner = {
+    x:200, y:200, r:80, w:160, h:160,
+    vx:120, vy:100, flip:false,
+    colorKey: COLOR_KEYS[0], animalKey: ANIMAL_KEYS[0], countIndex: 0,
+    visible:true
+  };
+
+  function clampRunner(){
+    runner.x = Math.max(runner.r, Math.min(W-runner.r, runner.x));
+    runner.y = Math.max(runner.r, Math.min(H-runner.r, runner.y));
+  }
+
+  let mode = 'colors'; // colors | animals | count | peekaboo | body
+  let score = 0;
+  let speedScale = 0.7;
+
+  function pickNext(){
+    if (mode==='colors') runner.colorKey = COLOR_KEYS[(Math.random()*COLOR_KEYS.length)|0];
+    if (mode==='animals') runner.animalKey = ANIMAL_KEYS[(Math.random()*ANIMAL_KEYS.length)|0];
+    if (mode==='count') runner.countIndex = (runner.countIndex+1) % COUNT_SEQ.length;
+    if (mode==='peekaboo') runner.visible = Math.random() < 0.4;
+  }
+
+  /* ================= Drawing ================= */
+  function drawBg(){
+    // gradient background
+    const g1 = ctx.createLinearGradient(0,0,0,H);
+    g1.addColorStop(0,'#0d1321'); g1.addColorStop(1,'#0a0f1a');
+    ctx.fillStyle=g1; ctx.fillRect(0,0,W,H);
+
+    // peekaboo covers (use your PNGs)
+    if (mode==='peekaboo'){
+      const imgs = [
+        pre.images['peek/circle'],
+        pre.images['peek/square'],
+        pre.images['peek/triangle']
+      ].filter(Boolean);
+      if (imgs.length){
+        const n=6, step=W/(n+1);
+        for(let i=0;i<n;i++){
+          const img = imgs[i % imgs.length];
+          const x = step*(i+1), y = H*0.55 + Math.sin((i+1)*1.3)*20;
+          const s = 110;
+          ctx.save(); ctx.globalAlpha = 0.85; // more opaque than drawn shapes
+          ctx.drawImage(img, x - s/2, y - s/2, s, s);
+          ctx.restore();
+        }
+      }
+    }
+  }
+
+  function drawBaseBody(){
+    const img = pre.images['main/ball'];
+    if (mode==='peekaboo' && !runner.visible) return;
+    if (img){
+      ctx.drawImage(img, runner.x - runner.w/2, runner.y - runner.h/2, runner.w, runner.h);
+    } else {
+      // fallback friendly blob
+      ctx.fillStyle = '#ffd86a';
+      ctx.beginPath(); ctx.ellipse(runner.x, runner.y, runner.w/2, runner.h/2, 0, 0, Math.PI*2); ctx.fill();
+      // minimal face
+      ctx.fillStyle = '#0b0f18';
+      ctx.beginPath(); ctx.arc(runner.x-28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(runner.x+28, runner.y-15, 12, 0, Math.PI*2); ctx.fill();
+      ctx.lineWidth = 10; ctx.lineCap='round'; ctx.strokeStyle='#0b0f18';
+      ctx.beginPath(); ctx.moveTo(runner.x-36, runner.y+25);
+      ctx.quadraticCurveTo(runner.x, runner.y+50, runner.x+36, runner.y+25); ctx.stroke();
+    }
+  }
+
+  function drawOverlay(){
+    if (mode==='peekaboo' && !runner.visible) return;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+
+    if (mode==='colors'){
+      const key = runner.colorKey, ent = ASSETS.colors[key];
+      const img = pre.images['colors/'+key];
+      if (img){
+        ctx.drawImage(img, runner.x - 140/2, runner.y - 140/2, 140, 140);
+      } else {
+        // tint circle if PNG missing
+        ctx.fillStyle = ent.fill;
+        ctx.beginPath(); ctx.ellipse(runner.x, runner.y, 60, 60, 0, 0, Math.PI*2); ctx.fill();
+      }
+    }
+
+    if (mode==='animals'){
+      const key = runner.animalKey, img = pre.images['animals/'+key];
+      if (img){
+        ctx.drawImage(img, runner.x - 140/2, runner.y - 140/2, 140, 140);
+      } else {
+        const icon = ASSETS.animals[key]?.icon || '⭐';
+        ctx.font = '56px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+        ctx.fillText(icon, runner.x, runner.y);
+      }
+    }
+
+    if (mode==='count'){
+      const n = COUNT_SEQ[runner.countIndex];
+      const img = pre.images['numbers/'+n];
+      if (img){
+        ctx.drawImage(img, runner.x - 120/2, runner.y - 120/2, 120, 120);
+      } else {
+        ctx.font = 'bold 64px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(String(n), runner.x, runner.y);
+      }
+    }
+  }
+
+  function draw(){ drawBg(); drawBaseBody(); drawOverlay(); }
+
+  /* ================= Loop & movement ================= */
+  let lastT=0, nudgeAt=0, peekFlipAt=0;
+  function step(t){
+    requestAnimationFrame(step);
+    if (!lastT){ lastT=t; return; }
+    const dt = Math.min(0.032, (t-lastT)/1000);
+    lastT = t;
+
+    if (mode==='peekaboo' && t > peekFlipAt){
+      peekFlipAt = t + 900 + Math.random()*1400;
+      runner.visible = !runner.visible;
+    }
+
+    runner.x += runner.vx*dt; runner.y += runner.vy*dt;
+    if (runner.x < runner.r){ runner.x=runner.r; runner.vx=Math.abs(runner.vx); }
+    if (runner.x > W-runner.r){ runner.x=W-runner.r; runner.vx=-Math.abs(runner.vx); }
+    if (runner.y < runner.r){ runner.y=runner.r; runner.vy=Math.abs(runner.vy); }
+    if (runner.y > H-runner.r){ runner.y=H-runner.r; runner.vy=-Math.abs(runner.vy); }
+
+    if (t>nudgeAt){
+      nudgeAt = t + 1200 + Math.random()*1800;
+      runner.vx += (Math.random()*100 - 50);
+      runner.vy += (Math.random()*100 - 50);
+      const max = speedScale * 220;
+      runner.vx = Math.max(-max, Math.min(max, runner.vx));
+      runner.vy = Math.max(-max, Math.min(max, runner.vy));
+    }
+
+    draw();
+  }
+
+  /* ================= UI feedback ================= */
+  function showRipple(x,y){
+    const el = document.createElement('div');
+    el.className='ripple'; el.style.left=x+'px'; el.style.top=y+'px';
+    stage.appendChild(el); setTimeout(()=>el.remove(),650);
+  }
+  function flashToast(msg){
+    const toast = document.getElementById('toast');
+    toast.textContent = msg; toast.classList.add('show');
+    clearTimeout(flashToast._t); flashToast._t = setTimeout(()=>toast.classList.remove('show'), 600);
+  }
+  function showLabel(text){
+    const labelEl = document.getElementById('label');
+    labelEl.textContent = text; labelEl.classList.add('show');
+    clearTimeout(showLabel._t); showLabel._t = setTimeout(()=>labelEl.classList.remove('show'), 900);
+  }
+
+  /* ================= Body-part hit test (for stickers) ================= */
+  function hitBodyPart(x,y){
+    const rx = x - runner.x, ry = y - runner.y;
+    const eyeL = (rx+28)**2 + (ry+15)**2 <= 20**2;
+    const eyeR = (rx-28)**2 + (ry+15)**2 <= 20**2;
+    const mouth= ry>10 && ry<46 && Math.abs(rx)<50;
+    const nose = rx*rx + ry*ry <= 12**2;
+    const earL = (rx+82)**2 + (ry+6)**2 <= 24**2;
+    const earR = (rx-82)**2 + (ry+6)**2 <= 24**2;
+
+    if (eyeL || eyeR) return {id:'eyes', name:'Eyes', iconPath:assetUrl(ASSETS.faceIcons.eyes)};
+    if (nose)         return {id:'nose', name:'Nose', iconPath:assetUrl(ASSETS.faceIcons.nose)};
+    if (mouth)        return {id:'mouth',name:'Mouth',iconPath:assetUrl(ASSETS.faceIcons.mouth)};
+    if (earL || earR) return {id:'ears', name:'Ears', icon:'👂'}; // no PNG provided for ears in zip
+    return null;
+  }
+
+  /* ================= Input (pointer-only, debounced) ================= */
+  let lastTapTime = 0;
+  function onPointerDown(ev){
+    if (ev.isPrimary === false) return;
+    const now = performance.now();
+    if (now - lastTapTime < 220) return;
+    lastTapTime = now;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+    if (mode==='peekaboo' && !runner.visible) return;
+
+    const dx = x - runner.x, dy = y - runner.y;
+    if (dx*dx + dy*dy > runner.r*runner.r) return;
+
+    // Snapshot current content BEFORE mutating
+    let speakText=null, labelText=null, sticker=null;
+
+    if (mode==='colors'){
+      const key = runner.colorKey, ent = ASSETS.colors[key];
+      speakText = ent.name + '!'; labelText = ent.name;
+      sticker = ['color_'+key, ent.name, ent.icon];
+    }
+    else if (mode==='animals'){
+      const key = runner.animalKey, ent = ASSETS.animals[key];
+      speak(ent?.phrase || 'Great job!'); labelText = ent?.name || key;
+      // Use the animal PNG as the sticker icon
+      const iconPath = pre.images['animals/'+key] ? assetUrl(ent.img) : (ent?.icon || '🐾');
+      sticker = ['animal_'+key, ent?.name || key, iconPath];
+    }
+    else if (mode==='count'){
+      const n = COUNT_SEQ[runner.countIndex];
+      const word = ASSETS.numbers[n]?.label || String(n);
+      speak(word); labelText = word;
+      const iconPath = pre.images['numbers/'+n] ? assetUrl(ASSETS.numbers[n].img) : '🔢';
+      sticker = ['count_'+n, String(n), iconPath];
+    }
+    else if (mode==='peekaboo'){
+      speakText = 'Peekaboo!'; labelText = 'Peekaboo!'; sticker = ['peekaboo','Peekaboo','🙈'];
+    }
+    else if (mode==='body'){
+      const part = hitBodyPart(x,y);
+      if (!part) return;
+      speakText = part.name + '!'; labelText = part.name;
+      sticker = ['body_'+part.id, part.name, part.iconPath || part.icon || '⭐'];
+    }
+
+    if (speakText) speak(speakText);
+    if (labelText) showLabel(labelText);
+    if (sticker) addSticker(...sticker);
+
+    score++; scoreEl.textContent = String(score);
+    showRipple(runner.x, runner.y);
+    flashToast('Great job!');
+
+    runner.vx = (Math.random()<.5?-1:1) * (160 + Math.random()*160) * speedScale;
+    runner.vy = (Math.random()<.5?-1:1) * (140 + Math.random()*140) * speedScale;
+
+    pickNext();
+  }
+  canvas.addEventListener('pointerdown', onPointerDown, {passive:true});
+  addEventListener('pointerdown', ensureAudio, {once:true});
+
+  /* ================= Controls ================= */
+  const resetBtn = document.getElementById('resetBtn');
+  const speedBtn = document.getElementById('speedBtn');
+  const clearShelfBtn = document.getElementById('clearShelfBtn');
+  const modeBtns = Array.from(document.querySelectorAll('.mode'));
+
+  resetBtn.addEventListener('click', () => { score=0; scoreEl.textContent='0'; flashToast('Reset!'); });
+  speedBtn.addEventListener('click', () => {
+    speedScale = speedScale===0.7 ? 1.0 : 0.7;
+    speedBtn.textContent = 'Speed: ' + (speedScale===0.7 ? 'Gentle' : 'Normal');
+  });
+  clearShelfBtn.addEventListener('click', () => { clearShelf(); flashToast('Cleared'); });
+
+  modeBtns.forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      modeBtns.forEach(b=>b.setAttribute('aria-pressed','false'));
+      btn.setAttribute('aria-pressed','true');
+      mode = btn.dataset.mode;
+      pickNext();
+      if (mode==='colors'){ speak('Colors'); peekTip.style.display='none'; }
+      if (mode==='animals'){ speak('Animals'); peekTip.style.display='none'; }
+      if (mode==='count'){ speak('Let\'s count!'); runner.countIndex=0; peekTip.style.display='none'; }
+      if (mode==='peekaboo'){ speak('Peekaboo!'); peekTip.style.display='block'; }
+      if (mode==='body'){ speak('Body parts'); peekTip.style.display='none'; }
+    });
+  });
+
+  /* ================= Start ================= */
+  async function init(){
+    resize();
+    runner.x = W*0.3 + Math.random()*W*0.4;
+    runner.y = H*0.3 + Math.random()*H*0.4;
+    try { await preload(); } catch {}
+    pickNext();
+    requestAnimationFrame(step);
+  }
+  setTimeout(init, 0);
+})();
+</script>
+</body>
+</html>
